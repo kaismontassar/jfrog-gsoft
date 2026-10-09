@@ -10,16 +10,28 @@ jobs:
   oidc-validation:
     name: Validate OIDC and DEV access
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 20
     permissions:
       contents: read
       id-token: write
     env:
       JF_URL: https://jfrogkmm.jfrog.io
       JF_PROJECT: gsoft
+      JFROG_CLI_BUILD_NAME: globalsoft-security-validation
+      JFROG_CLI_BUILD_NUMBER: ci-${{ github.run_id }}-${{ github.run_attempt }}
       JFROG_CLI_LOG_LEVEL: ERROR
 
     steps:
+      - name: Checkout application
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
       - name: Authenticate to JFrog using OIDC
         uses: jfrog/setup-jfrog-cli@v4
         with:
@@ -88,3 +100,75 @@ jobs:
 
           echo "PASS: CI identity cannot publish to PROD."
           echo "- PROD publishing: denied (HTTP 403, permissions)" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Configure npm repositories
+        working-directory: examples/npm-app
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/ci-results"
+          jf npm-config \
+            --server-id-resolve=setup-jfrog-cli-server \
+            --repo-resolve=gsoft-npm-dev-virtual \
+            --server-id-deploy=setup-jfrog-cli-server \
+            --repo-deploy=gsoft-npm-dev-local
+
+      - name: Install locked dependencies
+        working-directory: examples/npm-app
+        run: |
+          jf npm ci --ignore-scripts --no-audit --no-fund \
+            --build-name="$JFROG_CLI_BUILD_NAME" \
+            --build-number="$JFROG_CLI_BUILD_NUMBER" \
+            --module=globalsoft-ci-demo --project=gsoft
+
+      - name: Pre-build dependency audit
+        working-directory: examples/npm-app
+        run: |
+          jf audit --npm --sca --project=gsoft --fail=true --format=json \
+            > "$GITHUB_WORKSPACE/ci-results/dependency-audit.json"
+
+      - name: Test and package application
+        working-directory: examples/npm-app
+        run: |
+          npm test
+          mkdir -p dist
+          npm pack --ignore-scripts --pack-destination dist
+          sha256sum dist/*.tgz > "$GITHUB_WORKSPACE/ci-results/package-sha256.txt"
+
+      - name: Publish artifact and build information
+        working-directory: examples/npm-app
+        run: |
+          jf rt upload "dist/*.tgz" \
+            "gsoft-npm-dev-local/certification-tests/ci/$JFROG_CLI_BUILD_NUMBER/" \
+            --flat=true --fail-no-op=true \
+            --build-name="$JFROG_CLI_BUILD_NAME" \
+            --build-number="$JFROG_CLI_BUILD_NUMBER" \
+            --module=globalsoft-ci-demo --project=gsoft
+          jf rt build-publish "$JFROG_CLI_BUILD_NAME" \
+            "$JFROG_CLI_BUILD_NUMBER" --project=gsoft
+
+      - name: Final build scan
+        run: |
+          jf build-scan "$JFROG_CLI_BUILD_NAME" \
+            "$JFROG_CLI_BUILD_NUMBER" \
+            --project=gsoft --fail=true --format=json \
+            > "$GITHUB_WORKSPACE/ci-results/build-scan.json"
+
+      - name: Record pipeline result
+        run: |
+          {
+            echo "### GlobalSoft security pipeline"
+            echo "- Dependency audit: PASS"
+            echo "- Application tests and packaging: PASS"
+            echo "- Artifact and build publication: PASS"
+            echo "- Final build scan: PASS"
+            printf -- '- Build: `%s/%s`\n' \
+              "$JFROG_CLI_BUILD_NAME" "$JFROG_CLI_BUILD_NUMBER"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Preserve scan evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: globalsoft-ci-evidence-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ci-results/
+          if-no-files-found: warn
+          retention-days: 14

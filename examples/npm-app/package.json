@@ -1,0 +1,17 @@
+{
+  "name": "globalsoft-ci-demo",
+  "version": "1.0.0",
+  "private": true,
+  "description": "GlobalSoft dependency audit and build validation example",
+  "license": "UNLICENSED",
+  "main": "index.js",
+  "files": [
+    "index.js"
+  ],
+  "scripts": {
+    "test": "node --test"
+  },
+  "dependencies": {
+    "is-number": "7.0.0"
+  }
+}
