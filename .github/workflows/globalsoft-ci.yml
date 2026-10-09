@@ -20,34 +20,6 @@ jobs:
       JFROG_CLI_LOG_LEVEL: ERROR
 
     steps:
-      - name: Inspect OIDC claim constraints
-        shell: bash
-        run: |
-          python3 - <<'PY'
-          import base64
-          import json
-          import os
-          import urllib.request
-
-          url = os.environ["ACTIONS_ID_TOKEN_REQUEST_URL"]
-          url += "&audience=globalsoft-github-actions"
-          request = urllib.request.Request(url, headers={
-              "Authorization": "Bearer " + os.environ["ACTIONS_ID_TOKEN_REQUEST_TOKEN"]
-          })
-          with urllib.request.urlopen(request, timeout=30) as response:
-              token = json.load(response)["value"]
-
-          payload = token.split(".")[1]
-          payload += "=" * (-len(payload) % 4)
-          claims = json.loads(base64.urlsafe_b64decode(payload))
-          allowed = [
-              "iss", "aud", "sub", "repository", "repository_id",
-              "repository_owner", "repository_owner_id",
-              "ref", "workflow_ref", "event_name"
-          ]
-          print(json.dumps({key: claims.get(key) for key in allowed}, indent=2))
-          PY
-
       - name: Authenticate to JFrog using OIDC
         uses: jfrog/setup-jfrog-cli@v4
         with:
@@ -55,6 +27,8 @@ jobs:
           oidc-provider-name: globalsoft-github
           oidc-audience: globalsoft-github-actions
           disable-job-summary: true
+          disable-auto-build-publish: true
+          disable-auto-evidence-collection: true
 
       - name: Upload and verify DEV test artifact
         shell: bash
@@ -86,3 +60,31 @@ jobs:
             echo "- DEV upload/download: PASS"
             printf -- '- Artifact SHA-256: `%s`\n' "$Sha256"
           } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Verify PROD publishing is denied
+        shell: bash
+        run: |
+          set -euo pipefail
+          TestDir=$(mktemp -d "$RUNNER_TEMP/globalsoft-prod-denial-XXXXXX")
+          ArtifactPath="certification-tests/oidc/${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}/denied.txt"
+          printf 'GlobalSoft permission-boundary test\n' > "$TestDir/denied.txt"
+
+          HttpCode=$(jf rt curl -sS --connect-timeout 15 --max-time 60             -XPUT "/gsoft-docker-prod-local/$ArtifactPath"             -T "$TestDir/denied.txt"             -o "$TestDir/response.json" -w '%{http_code}')
+
+          printf 'PROD upload HTTP status: %s\n' "$HttpCode"
+          printf 'Test path: gsoft-docker-prod-local/%s\n' "$ArtifactPath"
+
+          if [ "$HttpCode" != "403" ]; then
+            echo "FAIL: expected a permission-denied response."
+            exit 1
+          fi
+
+          jq -r '.errors[]?.message' "$TestDir/response.json"
+          jq -e '
+            [.errors[]?.message] | join(" ") |
+            test("permission|not permitted|not authorized|unauthoriz|forbidden"; "i")
+            and (test("xray|blocking policy"; "i") | not)
+          ' "$TestDir/response.json" >/dev/null
+
+          echo "PASS: CI identity cannot publish to PROD."
+          echo "- PROD publishing: denied (HTTP 403, permissions)" >> "$GITHUB_STEP_SUMMARY"
