@@ -1,0 +1,60 @@
+name: GlobalSoft CI
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  oidc-validation:
+    name: Validate OIDC and DEV access
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      JF_URL: https://jfrogkmm.jfrog.io
+      JF_PROJECT: gsoft
+      JFROG_CLI_LOG_LEVEL: ERROR
+
+    steps:
+      - name: Authenticate to JFrog using OIDC
+        uses: jfrog/setup-jfrog-cli@v4
+        with:
+          version: 2.125.0
+          oidc-provider-name: globalsoft-github
+          oidc-audience: globalsoft-github-actions
+          disable-job-summary: true
+
+      - name: Upload and verify DEV test artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          TestDir=$(mktemp -d "$RUNNER_TEMP/globalsoft-oidc-XXXXXX")
+          ArtifactPath="certification-tests/oidc/${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}/validation.txt"
+
+          printf 'GlobalSoft OIDC validation\nRun: %s\n' \
+            "$GITHUB_RUN_ID" > "$TestDir/validation.txt"
+          Sha256=$(sha256sum "$TestDir/validation.txt" | cut -d' ' -f1)
+
+          jf rt curl -f -sS --connect-timeout 15 --max-time 60 \
+            -XPUT "/gsoft-generic-dev-local/$ArtifactPath" \
+            -H "X-Checksum-Sha256: $Sha256" \
+            -T "$TestDir/validation.txt" > "$TestDir/upload.json"
+
+          jf rt curl -f -sS --connect-timeout 15 --max-time 60 \
+            -XGET "/gsoft-generic-dev-local/$ArtifactPath" \
+            -o "$TestDir/download.txt"
+
+          cmp "$TestDir/validation.txt" "$TestDir/download.txt"
+          echo "PASS: OIDC authentication and DEV upload/download verified."
+
+          {
+            echo "### GlobalSoft OIDC validation"
+            echo "- Authentication: GitHub OIDC"
+            echo "- Project: gsoft"
+            echo "- DEV upload/download: PASS"
+            printf -- '- Artifact SHA-256: `%s`\n' "$Sha256"
+          } >> "$GITHUB_STEP_SUMMARY"
