@@ -8,7 +8,7 @@ permissions:
 
 jobs:
   oidc-validation:
-    name: Validate OIDC and DEV access
+    name: Validate application and security gates
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
@@ -144,38 +144,6 @@ jobs:
             --module=globalsoft-ci-demo --project=gsoft
           jf rt build-publish "$JFROG_CLI_BUILD_NAME" \
             "$JFROG_CLI_BUILD_NUMBER" --project=gsoft
-
-      - name: Diagnose CI build scan access
-        shell: bash
-        run: |
-          set -euo pipefail
-          Out="$GITHUB_WORKSPACE/ci-results"
-          mkdir -p "$Out"
-
-          ReadCode=$(jf rt curl -sS --connect-timeout 15 --max-time 60 \
-            "/api/build/$JFROG_CLI_BUILD_NAME/$JFROG_CLI_BUILD_NUMBER?project=gsoft" \
-            -o "$Out/build-read-response.json" -w '%{http_code}')
-          printf 'Build read HTTP status: %s\n' "$ReadCode" \
-            | tee "$Out/build-read-status.txt"
-
-          jq -n \
-            --arg name "$JFROG_CLI_BUILD_NAME" \
-            --arg number "$JFROG_CLI_BUILD_NUMBER" \
-            '{build_name:$name, build_number:$number, project:"gsoft"}' \
-            > "$Out/build-scan-request.json"
-
-          ScanCode=$(jf rt curl -sS --connect-timeout 15 --max-time 120 \
-            -X POST "/../xray/api/v2/ci/build" \
-            -H "Content-Type: application/json" \
-            -H "Accept: application/json" \
-            -d @"$Out/build-scan-request.json" \
-            -o "$Out/direct-build-scan-response.json" -w '%{http_code}')
-          printf 'Direct build scan HTTP status: %s\n' "$ScanCode" \
-            | tee "$Out/direct-build-scan-status.txt"
-
-          echo "--- DIRECT XRAY RESPONSE ---"
-          head -c 6000 "$Out/direct-build-scan-response.json"
-          printf '\n'
 
       - name: Final build scan
         run: |
