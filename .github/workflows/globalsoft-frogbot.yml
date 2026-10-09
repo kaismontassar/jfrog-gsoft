@@ -16,6 +16,7 @@ jobs:
       github.event.pull_request.user.id == 85876657 &&
       github.actor_id == '85876657'
     runs-on: ubuntu-24.04
+    environment: frogbot
     timeout-minutes: 15
     permissions:
       contents: read
