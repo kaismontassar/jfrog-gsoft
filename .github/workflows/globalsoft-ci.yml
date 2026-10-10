@@ -141,7 +141,7 @@ jobs:
             --flat=true --fail-no-op=true \
             --build-name="$JFROG_CLI_BUILD_NAME" \
             --build-number="$JFROG_CLI_BUILD_NUMBER" \
-            --module=globalsoft-ci-demo --project=gsoft
+            --module=globalsoft-ci-package --project=gsoft
           jf rt build-publish "$JFROG_CLI_BUILD_NAME" \
             "$JFROG_CLI_BUILD_NUMBER" --project=gsoft
 
